@@ -1,170 +1,198 @@
-import { useEffect } from 'react';
-
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable prettier/prettier */
+import { useState, useEffect } from 'react';
 import './App.css';
-import {
-  makeAgoricChainStorageWatcher,
-  AgoricChainStoragePathKind as Kind,
-} from '@agoric/rpc';
-import { create } from 'zustand';
-import {
-  makeAgoricWalletConnection,
-  suggestChain,
-} from '@agoric/web-components';
-import { subscribeLatest } from '@agoric/notifier';
-import { makeCopyBag } from '@agoric/store';
-import { Logos } from './components/Logos';
-import { Inventory } from './components/Inventory';
-import { Trade } from './components/Trade';
+import { connectLeapWallet } from './walletConnection';
+import { motion } from 'framer-motion';
 
-const { entries, fromEntries } = Object;
-
-type Wallet = Awaited<ReturnType<typeof makeAgoricWalletConnection>>;
-
-const ENDPOINTS = {
-  RPC: 'http://localhost:26657',
-  API: 'http://localhost:1317',
-};
-
-const codeSpaceHostName = import.meta.env.VITE_HOSTNAME;
-
-const codeSpaceDomain = import.meta.env
-  .VITE_GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN;
-
-if (codeSpaceHostName) {
-  ENDPOINTS.API = `https://${codeSpaceHostName}-1317.${codeSpaceDomain}`;
-  ENDPOINTS.RPC = `https://${codeSpaceHostName}-26657.${codeSpaceDomain}`;
+interface Item {
+  id: number;
+  name: string;
+  price: number;
+  description: string;
 }
-if (codeSpaceHostName && codeSpaceDomain) {
-  ENDPOINTS.API = `https://${codeSpaceHostName}-1317.${codeSpaceDomain}`;
-  ENDPOINTS.RPC = `https://${codeSpaceHostName}-26657.${codeSpaceDomain}`;
-} else {
-  console.error(
-    'Missing environment variables: VITE_HOSTNAME or VITE_GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN',
-  );
-}
-const watcher = makeAgoricChainStorageWatcher(ENDPOINTS.API, 'agoriclocal');
-
-interface AppState {
-  wallet?: Wallet;
-  offerUpInstance?: unknown;
-  brands?: Record<string, unknown>;
-  purses?: Array<Purse>;
-}
-
-const useAppStore = create<AppState>(() => ({}));
-
-const setup = async () => {
-  watcher.watchLatest<Array<[string, unknown]>>(
-    [Kind.Data, 'published.agoricNames.instance'],
-    instances => {
-      console.log('got instances', instances);
-      useAppStore.setState({
-        offerUpInstance: instances.find(([name]) => name === 'offerUp')!.at(1),
-      });
-    },
-  );
-
-  watcher.watchLatest<Array<[string, unknown]>>(
-    [Kind.Data, 'published.agoricNames.brand'],
-    brands => {
-      console.log('Got brands', brands);
-      useAppStore.setState({
-        brands: fromEntries(brands),
-      });
-    },
-  );
-};
-
-const connectWallet = async () => {
-  await suggestChain('https://local.agoric.net/network-config');
-  const wallet = await makeAgoricWalletConnection(watcher, ENDPOINTS.RPC);
-  useAppStore.setState({ wallet });
-  const { pursesNotifier } = wallet;
-  for await (const purses of subscribeLatest<Purse[]>(pursesNotifier)) {
-    console.log('got purses', purses);
-    useAppStore.setState({ purses });
-  }
-};
-
-const makeOffer = (giveValue: bigint, wantChoices: Record<string, bigint>) => {
-  const { wallet, offerUpInstance, brands } = useAppStore.getState();
-  if (!offerUpInstance) throw Error('no contract instance');
-  if (!(brands && brands.IST && brands.Item))
-    throw Error('brands not available');
-
-  const value = makeCopyBag(entries(wantChoices));
-  const want = { Items: { brand: brands.Item, value } };
-  const give = { Price: { brand: brands.IST, value: giveValue } };
-
-  wallet?.makeOffer(
-    {
-      source: 'contract',
-      instance: offerUpInstance,
-      publicInvitationMaker: 'makeTradeInvitation',
-    },
-    { give, want },
-    undefined,
-    (update: { status: string; data?: unknown }) => {
-      if (update.status === 'error') {
-        alert(`Offer error: ${update.data}`);
-      }
-      if (update.status === 'accepted') {
-        alert('Offer accepted');
-      }
-      if (update.status === 'refunded') {
-        alert('Offer rejected');
-      }
-    },
-  );
-};
 
 function App() {
+  const [wallet, setWallet] = useState<string | null>(null);
+  const [items] = useState<Item[]>([]);
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [donationAmount, setDonationAmount] = useState(0);
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const [balance, setBalance] = useState(1000);
+  const [donationId, setDonationId] = useState<string | null>(null);
+
   useEffect(() => {
-    setup();
+    const urlParams = new URLSearchParams(window.location.search);
+    const id = urlParams.get('donationId');
+    if (id) {
+      setDonationId(id);
+    }
   }, []);
 
-  const { wallet, purses } = useAppStore(({ wallet, purses }) => ({
-    wallet,
-    purses,
-  }));
-  const istPurse = purses?.find(p => p.brandPetname === 'IST');
-  const itemsPurse = purses?.find(p => p.brandPetname === 'Item');
+  const handleConnect = async () => {
+    try {
+      const connection = await connectLeapWallet();
+      setWallet(connection.address);
+      setWalletConnected(true);
+    } catch (error) {
+      console.error('Failed to connect wallet:', error);
+      alert('Failed to connect wallet. Please try again.');
+    }
+  };
 
-  const tryConnectWallet = () => {
-    connectWallet().catch(err => {
-      switch (err.message) {
-        case 'KEPLR_CONNECTION_ERROR_NO_SMART_WALLET':
-          alert('no smart wallet at that address');
-          break;
-        default:
-          alert(err.message);
+  useEffect(() => {
+    const fetchWalletBalance = async () => {
+      if (wallet) {
+        const balance = await getTestWalletBalance(wallet);
+        setWalletBalance(balance);
       }
-    });
+    };
+    fetchWalletBalance();
+  }, [wallet]);
+
+  const getTestWalletBalance = async (walletId: string): Promise<number> => {
+    return 1000;
+  };
+
+  const logTransaction = (walletId: string, donationAmount: number, adminFee: number) => {
+    const transactionDetails = `Wallet ID: ${walletId}, Donation Amount: ${donationAmount}, Admin Fee: ${adminFee}`;
+    console.log(transactionDetails);
+  };
+
+  const handleDonate = async () => {
+    if (!wallet) {
+      alert('Please connect your Leap Cosmos wallet first.');
+      return;
+    }
+    try {
+      const approval = await requestLeapApproval(donationAmount);
+      if (approval) {
+        const adminFee = donationAmount * 0.01;
+        const userDonation = donationAmount - adminFee;
+        const walletId = wallet;
+        logTransaction(walletId, userDonation, adminFee);
+
+        alert(`Donation of ${userDonation} IST approved!`);
+        handleDonation(-donationAmount);
+
+        const redirectUrl = new URL('http://localhost:3000/dashboard/done');
+        redirectUrl.searchParams.set('walletId', walletId);
+        redirectUrl.searchParams.set('donationAmount', donationAmount.toString());
+        redirectUrl.searchParams.set('adminAmount', adminFee.toString());
+        if (donationId) {
+          redirectUrl.searchParams.set('donationId', donationId);
+        }
+
+        window.location.href = redirectUrl.toString();
+      } else {
+        alert('Donation not approved.');
+      }
+    } catch (error) {
+      console.error('Donation failed:', error);
+      alert('Donation failed. Please try again.');
+    } finally {
+      const newBalance = await getTestWalletBalance(wallet);
+      setWalletBalance(newBalance);
+    }
+  };
+
+  const requestLeapApproval = async (amount: number): Promise<boolean> => {
+    return new Promise((resolve) => setTimeout(() => resolve(true), 1000));
+  };
+
+  const handleDonation = (amount: number) => {
+    setBalance((prevBalance) => prevBalance + amount);
   };
 
   return (
-    <>
-      <Logos />
-      <h1>Items Listed on Offer Up</h1>
-
-      <div className="card">
-        <Trade
-          makeOffer={makeOffer}
-          istPurse={istPurse as Purse}
-          walletConnected={!!wallet}
-        />
-        <hr />
-        {wallet && istPurse ? (
-          <Inventory
-            address={wallet.address}
-            istPurse={istPurse}
-            itemsPurse={itemsPurse as Purse}
-          />
-        ) : (
-          <button onClick={tryConnectWallet}>Connect Wallet</button>
-        )}
+    <div className="app-container">
+      <div className="background-effects">
+        <div className="gradient-circle circle1"></div>
+        <div className="gradient-circle circle2"></div>
       </div>
-    </>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.8 }}
+        className="content-wrapper"
+      >
+        <h1 className="title">Agoric Donation Platform</h1>
+
+        {donationId && (
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="donation-id-card"
+          >
+            <span className="label">Donation ID:</span>
+            <span className="value">{donationId}</span>
+          </motion.div>
+        )}
+
+        <div className="wallet-section">
+          {!walletConnected ? (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="connect-button glow-effect"
+              onClick={handleConnect}
+            >
+              Connect Leap Wallet
+            </motion.button>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="wallet-info"
+            >
+              <div className="wallet-details">
+                <div className="detail-item">
+                  <span className="label">Wallet Address:</span>
+                  <span className="value">{wallet}</span>
+                </div>
+                <div className="detail-item">
+                  <span className="label">Balance:</span>
+                  <span className="value highlight">{walletBalance} IST</span>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </div>
+
+        <motion.div
+          className="donation-section glass-effect"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3 }}
+        >
+          <div className="input-group">
+            <label htmlFor="donation">Donation Amount (IST)</label>
+            <input
+              type="number"
+              id="donation"
+              value={donationAmount}
+              onChange={(e) => setDonationAmount(Number(e.target.value))}
+              min="0"
+              className="donation-input"
+            />
+          </div>
+
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="donate-button glow-effect"
+            onClick={handleDonate}
+            disabled={!walletConnected || donationAmount <= 0}
+          >
+            <span className="button-content">
+              <span className="icon">💝</span>
+              Donate Now
+            </span>
+          </motion.button>
+        </motion.div>
+      </motion.div>
+    </div>
   );
 }
 

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
 /**
  * @file Contract to mint and sell a few Item NFTs at a time.
  *
@@ -19,6 +20,7 @@
  */
 // @ts-check
 
+import assert from 'assert';
 import { Far } from '@endo/far';
 import { M, getCopyBagEntries } from '@endo/patterns';
 import { AssetKind } from '@agoric/ertp/src/amountMath.js';
@@ -31,6 +33,7 @@ import '@agoric/zoe/exported.js';
  * @import {CopyBag} from '@endo/patterns';
  *
  */
+// @ts-ignore
 const { Fail, quote: q } = assert;
 
 // #region bag utilities

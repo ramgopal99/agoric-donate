@@ -1,7 +1,9 @@
-// @ts-check
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck
 import { E } from '@endo/far';
 import { makeMarshal } from '@endo/marshal';
 import { AmountMath } from '@agoric/ertp/src/amountMath.js';
+import assert from 'assert';
 
 console.warn('start proposal module evaluating');
 
